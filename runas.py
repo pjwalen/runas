@@ -6,45 +6,44 @@ import datetime
 import os
 import pickle
 import subprocess
+import yaml
 
 DURATION = 900
-SERIAL_NUMBER = 'arn:aws:iam::056952386373:mfa/patrick.walentiny@pearson.com'
 config_dir = os.path.join(os.environ['HOME'], '.runas')
 cache_file = os.path.join(config_dir, 'cache')
+config_file = os.path.join(config_dir, 'config')
 
 
 class CacheFileCorrupt(Exception):
     pass
 
 
-def assume_role(account_id, role):
-    session_token = get_session_token()
+def assume_role(session_token, account):
     client = boto3.client(
         'sts',
         aws_access_key_id=session_token['AccessKeyId'],
         aws_secret_access_key=session_token['SecretAccessKey'],
-        aws_session_token=session_token['SessionToken']
+        aws_session_token=session_token['SessionToken'],
+        region_name=account['region']
     )
     response = client.assume_role(
-        RoleArn='arn:aws:iam::{}:role/{}'.format(account_id, role),
+        RoleArn='arn:aws:iam::{}:role/{}'.format(account['account-id'], account['role-arn']),
         RoleSessionName='PCS-Pipeline',
     )
-    config_session_environment(response['Credentials'])
+    config_session_environment(response['Credentials'], account)
 
 
-def config_session_environment(credentials):
+def config_session_environment(credentials, account):
     os.environ['AWS_ACCESS_KEY_ID'] = credentials['AccessKeyId']
     os.environ['AWS_SECRET_ACCESS_KEY'] = credentials['SecretAccessKey']
     os.environ['AWS_SESSION_TOKEN'] = credentials['SessionToken']
+    os.environ['AWS_DEFAULT_REGION'] = account['region']
     
 
 def get_args():
     # Parse the arguments
     parser = argparse.ArgumentParser(description='Deploy an applications cloudformation template.')
-    parser.add_argument('--profile', help='Set the AWS profile in ~/.aws/configure to use', required=True)
-    parser.add_argument('--region', help='Set the region to use', required=True)
-    parser.add_argument('--account-id', help='Set the account id to use', required=True)
-    parser.add_argument('--role', help='Set the role to use', required=True)
+    parser.add_argument('--account', help='The account you want to run under.', required=True)
     parser.add_argument('command', nargs='*', help='The command to run')
     return parser.parse_args()
 
@@ -68,29 +67,41 @@ def get_cache_data():
     return cache_data
 
 
-def get_session_token():
+def get_config():
+    with open(config_file) as configfp:
+        config = yaml.load(configfp)
+    return config
+
+
+def get_session_token(profile, account):
     # Get cache data
     cache_data = get_cache_data()
 
     # Check if we have an existing session, if so use it
     try:
-        cached_session = cache_data[os.environ['AWS_PROFILE']]
+        cached_session = cache_data[account['profile']]
         if cached_session['Expiration'].replace(tzinfo=None) > datetime.datetime.now():
             return cached_session
     except KeyError:
         pass
 
     # If not, Create one
-    token_code = input('MFA Code for {}: '.format(SERIAL_NUMBER))
-    client = boto3.client('sts')
+    token_code = input('MFA Code for {}: '.format(profile['mfa_serial']))
+    client = boto3.client(
+        'sts',
+        aws_access_key_id=profile['aws_access_key_id'],
+        aws_secret_access_key=profile['aws_secret_access_key'],
+        region_name=account['region']
+    )
     response = client.get_session_token(
         DurationSeconds=DURATION,
-        SerialNumber=SERIAL_NUMBER,
+        SerialNumber=profile['mfa_serial'],
         TokenCode=token_code
     )
+
     # Write the created session to cache
     cache_data = get_cache_data()
-    cache_data[os.environ['AWS_PROFILE']] = response['Credentials']
+    cache_data[account['profile']] = response['Credentials']
     write_cache_data(cache_data)
     return response['Credentials']
 
@@ -102,8 +113,9 @@ def write_cache_data(cache_data):
 
 if __name__ == '__main__':
     args = get_args()
-    os.environ['AWS_PROFILE'] = args.profile
-    os.environ['AWS_DEFAULT_REGION'] = args.region
-    get_session_token()
-    assume_role(args.account_id, args.role)
+    config = get_config()
+    account = config['accounts'][args.account]
+    profile = config['profiles'][account['profile']]
+    session_token = get_session_token(profile, account)
+    assume_role(session_token, account)
     subprocess.call(args.command)
