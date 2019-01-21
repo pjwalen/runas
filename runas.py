@@ -8,7 +8,6 @@ import pickle
 import subprocess
 import yaml
 
-DURATION = 900
 config_dir = os.path.join(os.environ['HOME'], '.runas')
 cache_file = os.path.join(config_dir, 'cache')
 config_file = os.path.join(config_dir, 'config')
@@ -44,6 +43,7 @@ def get_args():
     # Parse the arguments
     parser = argparse.ArgumentParser(description='Deploy an applications cloudformation template.')
     parser.add_argument('--account', help='The account you want to run under.', required=True)
+    parser.add_argument('--duration', help='The duration of the session before expiration.', default=900, type=int)
     parser.add_argument('command', nargs='*', help='The command to run')
     return parser.parse_args()
 
@@ -73,7 +73,7 @@ def get_config():
     return config
 
 
-def get_session_token(profile, account):
+def get_session_token(profile, account, duration):
     # Get cache data
     cache_data = get_cache_data()
 
@@ -94,7 +94,7 @@ def get_session_token(profile, account):
         region_name=account['region']
     )
     response = client.get_session_token(
-        DurationSeconds=DURATION,
+        DurationSeconds=args.duration,
         SerialNumber=profile['mfa_serial'],
         TokenCode=token_code
     )
@@ -116,6 +116,6 @@ if __name__ == '__main__':
     config = get_config()
     account = config['accounts'][args.account]
     profile = config['profiles'][account['profile']]
-    session_token = get_session_token(profile, account)
+    session_token = get_session_token(profile, account, args.duration)
     assume_role(session_token, account)
     subprocess.call(args.command)
