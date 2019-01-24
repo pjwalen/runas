@@ -44,8 +44,10 @@ def get_args():
     parser = argparse.ArgumentParser(description='Deploy an applications cloudformation template.')
     parser.add_argument('--account', help='The account you want to run under.', required=True)
     parser.add_argument('--duration', help='The duration of the session before expiration.', default=900, type=int)
-    parser.add_argument('command', nargs=argparse.REMAINDER, help='The command to run')
-    return parser.parse_args()
+    parser.add_argument('command', help='The command to run')
+    parser.add_argument('command_arguments', nargs=argparse.REMAINDER, help='The command arguments')
+    args = parser.parse_args()
+    return args
 
 
 def get_cache_data():
@@ -118,4 +120,4 @@ if __name__ == '__main__':
     profile = config['profiles'][account['profile']]
     session_token = get_session_token(profile, account, args.duration)
     assume_role(session_token, account)
-    subprocess.call(args.command)
+    subprocess.call([args.command] + args.command_arguments)
